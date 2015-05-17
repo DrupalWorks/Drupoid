@@ -1,5 +1,6 @@
 package com.swentel.drupoid;
 
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.HashMap;
@@ -11,17 +12,16 @@ import org.json.JSONObject;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.ProgressDialog;
+import android.content.ContentResolver;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
-import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.net.ConnectivityManager;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Bundle;
-import android.provider.MediaStore;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
@@ -39,12 +39,10 @@ public class DrupoidActivity extends Activity {
 
   private int result;
   private String message;
-  private Bitmap bitmap;
   private String image_title;
-  private String selectedImagePath;
+  private Uri selectedImageUri;
   private ProgressDialog dialog;
   private final int SELECT_PICTURE = 1;
-  InputStream inputStream;
   String drupappUser = "";
   String drupappPass = "";
   String drupappEndpoint = "";
@@ -77,7 +75,7 @@ public class DrupoidActivity extends Activity {
       String action = intent.getAction();
       if (Intent.ACTION_SEND.equals(action)) {
         if (extras.containsKey(Intent.EXTRA_STREAM)) {
-          Uri selectedImageUri = (Uri) extras.getParcelable(Intent.EXTRA_STREAM);
+          selectedImageUri = extras.getParcelable(Intent.EXTRA_STREAM);
           drupappSetPreview(selectedImageUri);
         }
       }
@@ -112,17 +110,6 @@ public class DrupoidActivity extends Activity {
   }
 
   /**
-   * Get path of image.
-   */
-  public String getPath(Uri uri) {
-    String[] projection = { MediaStore.Images.Media.DATA };
-    Cursor cursor = managedQuery(uri, projection, null, null, null);
-    int column_index = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATA);
-    cursor.moveToFirst();
-    return cursor.getString(column_index);
-  }
-
-  /**
    * OnClickListener on select button.
    */
   private final View.OnClickListener onSelectPress = new View.OnClickListener() {
@@ -146,7 +133,7 @@ public class DrupoidActivity extends Activity {
       }
 
       EditText title = (EditText) findViewById(R.id.title);
-      if (title.getText().toString().length() > 0 && selectedImagePath.toString().length() > 0) {
+      if (title.getText().toString().length() > 0 && selectedImageUri != null) {
         image_title = title.getText().toString();
         dialog = ProgressDialog.show(DrupoidActivity.this, getString(R.string.uploading), getString(R.string.please_wait), true);
         new drupappUploadTask().execute();
@@ -192,7 +179,7 @@ public class DrupoidActivity extends Activity {
   public void onActivityResult(int requestCode, int resultCode, Intent data) {
     if (resultCode == RESULT_OK) {
       if (requestCode == SELECT_PICTURE) {
-        Uri selectedImageUri = data.getData();
+        selectedImageUri = data.getData();
         drupappSetPreview(selectedImageUri);
       }
     }
@@ -223,10 +210,7 @@ public class DrupoidActivity extends Activity {
   public boolean drupappIsOnline() {
     ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
     // Test for connection
-    if (cm.getActiveNetworkInfo() != null && cm.getActiveNetworkInfo().isAvailable() && cm.getActiveNetworkInfo().isConnected()) {
-      return true;
-    }
-    return false;
+    return cm.getActiveNetworkInfo() != null && cm.getActiveNetworkInfo().isAvailable() && cm.getActiveNetworkInfo().isConnected();
   }
 
   /**
@@ -241,7 +225,6 @@ public class DrupoidActivity extends Activity {
     imgView.setOnClickListener(onSelectPress);
     TextView imageSelect = (TextView) findViewById(R.id.picture_select);
     imageSelect.setOnClickListener(onSelectPress);
-    drupappCloseKeyboard();
   }
 
   /**
@@ -257,15 +240,6 @@ public class DrupoidActivity extends Activity {
     EditText drupapp_url = (EditText) findViewById(R.id.drupapp_url);
     String drupappEndpoint = Common.getPref(getBaseContext(), "drupappEndpoint", "");
     drupapp_url.setText(drupappEndpoint);
-    drupappCloseKeyboard();
-  }
-
-  /**
-   * Close keyboard
-   */
-  public void drupappCloseKeyboard() {
-    InputMethodManager imm = (InputMethodManager) getSystemService(Activity.INPUT_METHOD_SERVICE);
-    imm.toggleSoftInput(InputMethodManager.HIDE_IMPLICIT_ONLY, 0);
   }
 
   /**
@@ -277,9 +251,9 @@ public class DrupoidActivity extends Activity {
     alertDialog.setTitle(title);
     alertDialog.setMessage(message);
     alertDialog.setButton(getString(R.string.close), new DialogInterface.OnClickListener() {
-      public void onClick(DialogInterface dialog, int which) {
-        dialog.cancel();
-      }
+        public void onClick(DialogInterface dialog, int which) {
+            dialog.cancel();
+        }
     });
     alertDialog.show();
   }
@@ -287,42 +261,51 @@ public class DrupoidActivity extends Activity {
   /**
    * Set preview in the imageView.
    */
-  public void drupappSetPreview(Uri selectedImageUri) {
+  public void drupappSetPreview(Uri uri) {
+
+    ContentResolver contentResolver = getContentResolver();
 
     // The selected image can either come from the Image gallery
     // or from the File manager.
-    String fileManagerPath = selectedImageUri.getPath();
-    String imageGalleryPath = getPath(selectedImageUri);
-    if (imageGalleryPath != null) {
-      selectedImagePath = imageGalleryPath;
-    }
-    else if (fileManagerPath != null) {
-      selectedImagePath = fileManagerPath;
-    }
-
-    // Create preview.
-    bitmap = drupappCalculateSize(selectedImagePath, 300);
     ImageView imageView = (ImageView) findViewById(R.id.image_preview);
-    imageView.setImageBitmap(bitmap);
+      try {
+          Bitmap bitmap = getThumbnail(uri, contentResolver);
+          imageView.setImageBitmap(bitmap);
+      }
+      catch (Exception ignored) {}
   }
 
-  /**
-   * Calculate size of preview.
-   */
-  public Bitmap drupappCalculateSize(String selectedImagePath, int maxSize) {
-    BitmapFactory.Options opts = new BitmapFactory.Options();
-    opts.inJustDecodeBounds = true;
-    BitmapFactory.decodeFile(selectedImagePath, opts);
-    int w = opts.outHeight, h = opts.outHeight;
-    int maxDim = (w > h) ? w : h;
+    public static Bitmap getThumbnail(Uri uri, ContentResolver contentResolver) throws IOException{
+        InputStream input = contentResolver.openInputStream(uri);
 
-    int inSample = maxDim / maxSize;
-    opts = new BitmapFactory.Options();
-    opts.inSampleSize = inSample;
-    bitmap = BitmapFactory.decodeFile(selectedImagePath, opts);
+        BitmapFactory.Options onlyBoundsOptions = new BitmapFactory.Options();
+        onlyBoundsOptions.inJustDecodeBounds = true;
+        onlyBoundsOptions.inDither=true;//optional
+        onlyBoundsOptions.inPreferredConfig=Bitmap.Config.ARGB_8888;//optional
+        BitmapFactory.decodeStream(input, null, onlyBoundsOptions);
+        input.close();
+        if ((onlyBoundsOptions.outWidth == -1) || (onlyBoundsOptions.outHeight == -1))
+            return null;
 
-    return bitmap;
-  }
+        int originalSize = (onlyBoundsOptions.outHeight > onlyBoundsOptions.outWidth) ? onlyBoundsOptions.outHeight : onlyBoundsOptions.outWidth;
+
+        double ratio = (originalSize > 600) ? (originalSize / 600) : 1.0;
+
+        BitmapFactory.Options bitmapOptions = new BitmapFactory.Options();
+        bitmapOptions.inSampleSize = getPowerOfTwoForSampleRatio(ratio);
+        bitmapOptions.inDither=true;//optional
+        bitmapOptions.inPreferredConfig=Bitmap.Config.ARGB_8888;//optional
+        input = contentResolver.openInputStream(uri);
+        Bitmap bitmap = BitmapFactory.decodeStream(input, null, bitmapOptions);
+        input.close();
+        return bitmap;
+    }
+
+    private static int getPowerOfTwoForSampleRatio(double ratio){
+        int k = Integer.highestOneBit((int)Math.floor(ratio));
+        if(k==0) return 1;
+        else return k;
+    }
 
   /**
    * Upload task.
@@ -342,10 +325,9 @@ public class DrupoidActivity extends Activity {
 
       // Perform request.
       try {
-        sResponse = HttpMultipartRequest.execute(getBaseContext(), drupappEndpoint, Params, Common.SEND_COOKIE, selectedImagePath, "image");
+        sResponse = HttpMultipartRequest.execute(getBaseContext(), drupappEndpoint, Params, Common.SEND_COOKIE, selectedImageUri, "image");
       }
-      catch (IOException e) {
-      }
+      catch (IOException ignored) {}
 
       return sResponse;
     }
@@ -363,13 +345,11 @@ public class DrupoidActivity extends Activity {
       // Show message and reset application.
       if (result == Common.SUCCESS) {
         Toast.makeText(getBaseContext(), message, Toast.LENGTH_LONG).show();
-        selectedImagePath = "";
-        bitmap = null;
+        selectedImageUri = null;
         EditText title = (EditText) findViewById(R.id.title);
         title.setText("");
         ImageView imageView = (ImageView) findViewById(R.id.image_preview);
         imageView.setImageDrawable(null);
-        drupappCloseKeyboard();
       }
       // Go to login screen.
       else if (result == Common.NO_AUTH) {
@@ -399,10 +379,9 @@ public class DrupoidActivity extends Activity {
       Params.put("drupapp_username", drupappUser);
       Params.put("drupapp_password", drupappPass);
       try {
-        sResponse = HttpMultipartRequest.execute(getBaseContext(), drupappEndpoint, Params, Common.SAVE_COOKIE, "", "");
+        sResponse = HttpMultipartRequest.execute(getBaseContext(), drupappEndpoint, Params, Common.SAVE_COOKIE, null, "");
       }
-      catch (IOException e) {
-      }
+      catch (IOException ignored) {}
 
       return sResponse;
     }
@@ -444,10 +423,9 @@ public class DrupoidActivity extends Activity {
       Params.put("request_type", "logout");
       // Perform request.
       try {
-        sResponse = HttpMultipartRequest.execute(getBaseContext(), drupappEndpoint, Params, Common.SEND_COOKIE, "", "");
+        sResponse = HttpMultipartRequest.execute(getBaseContext(), drupappEndpoint, Params, Common.SEND_COOKIE, null, "");
       }
-      catch (IOException e) {
-      }
+      catch (IOException ignored) {}
 
       return sResponse;
     }

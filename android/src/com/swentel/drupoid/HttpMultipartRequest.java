@@ -2,7 +2,6 @@ package com.swentel.drupoid;
 
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
-import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.net.HttpURLConnection;
@@ -10,6 +9,7 @@ import java.net.URL;
 import java.util.HashMap;
 
 import android.content.Context;
+import android.net.Uri;
 
 public class HttpMultipartRequest {
 
@@ -26,18 +26,17 @@ public class HttpMultipartRequest {
    *        A collection of key value pairs to send along
    * @param cookieAction
    *        Whether we need to save or send a session cookie.
-   * @param filePath
-   *        The full file path on the device.
+   * @param imageUri
+   *        An image URI.
    * @param fileParameterName
    *        The key to send in the request.
    */
-  public static String execute(Context ctxt, String urlString, HashMap<String, String> parameters, int cookieAction, String filePath, String fileParameterName) throws IOException {
+  public static String execute(Context ctxt, String urlString, HashMap<String, String> parameters, int cookieAction, Uri imageUri, String fileParameterName) throws IOException {
     HttpURLConnection conn = null;
     DataOutputStream dos = null;
     DataInputStream dis = null;
     FileInputStream fileInputStream = null;
     URL url = new URL(urlString);
-    File file = null;
     String sResponse = "";
 
     byte[] buffer;
@@ -67,16 +66,15 @@ public class HttpMultipartRequest {
       dos = new DataOutputStream(conn.getOutputStream());
 
       // See if we need to upload a file.
-      if (filePath.length() > 0) {
-        file = new File(filePath);
-        fileInputStream = new FileInputStream(file);
+      if (imageUri != null) {
+        fileInputStream = (FileInputStream) ctxt.getContentResolver().openInputStream(imageUri);
         dos.writeBytes(twoHyphens + boundary + lineEnd);
-        dos.writeBytes("Content-Disposition: form-data; name=\"" + fileParameterName + "\"; filename=\"" + file.toString() + "\"" + lineEnd);
+        dos.writeBytes("Content-Disposition: form-data; name=\"" + fileParameterName + "\"; filename=\"drupapp.jpg\"" + lineEnd);
         dos.writeBytes("Content-Type: text/xml" + lineEnd);
         dos.writeBytes(lineEnd);
 
         // create a buffer of maximum size
-        buffer = new byte[Math.min((int) file.length(), maxBufferSize)];
+        buffer = new byte[Math.min(30, maxBufferSize)];
         int length;
         // read file and write it into form...
         while ((length = fileInputStream.read(buffer)) != -1) {
@@ -99,7 +97,7 @@ public class HttpMultipartRequest {
       dos.flush();
 
       if (cookieAction == Common.SAVE_COOKIE) {
-        String headerName = null;
+        String headerName;
         for (int i = 1; (headerName = conn.getHeaderFieldKey(i)) != null; i++) {
           if (headerName.equals("Set-Cookie")) {
             String cookie = conn.getHeaderField(i);
